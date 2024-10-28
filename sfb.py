@@ -47,6 +47,9 @@ def ip_scan(ip, q):
             s = socket.socket()
             s.connect((ip, port))
             print(f"{ip}:{port} open")
+            with open('port_open.txt', 'a') as f:
+                f.write(f"{ip}:{port}\n")
+                f.close()
         except Exception:
             print(f"{ip}:{port} closed")
         finally:
