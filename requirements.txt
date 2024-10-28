@@ -1,0 +1,6 @@
+paramiko
+ftplib
+queue
+threading
+sys
+socket
