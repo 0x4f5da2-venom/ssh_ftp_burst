@@ -4,37 +4,44 @@ import threading
 import sys
 import socket
 import paramiko
+import requests
 
 
 def ftp_baopo(ip, user_dic, password_dic):
-    for f_u in open(user_dic):
-        f_u = f_u.strip()
-        for f_p in open(password_dic):
-            f_p = f_p.strip()
+    with open(user_dic) as users:
+        user_list = users.read().splitlines()
+    with open(password_dic) as passwords:
+        password_list = passwords.read().splitlines()
+
+    for f_u in user_list:
+        for f_p in password_list:
             try:
                 ftp = ftplib.FTP()
-                ftp.connect(ip, 21)
+                ftp.connect(ip, 21, timeout=5)
                 ftp.login(f_u, f_p)
-                print('[+++FTP] ' + f_u + ' ---> ' + f_p + ' success')
-            except Exception:
-                print('[-FTP] ' + f_u + ' ---> ' + f_p + ' failed')
+                print(f'[+++FTP] {f_u} ---> {f_p} success')
+            except Exception as e:
+                print(f'[-FTP] {f_u} ---> {f_p} failed: {e}')
             finally:
                 if 'ftp' in locals():
-                    ftp.close()
+                    ftp.quit()
 
 
 def ssh_baopo(ip, user_dic, password_dic):
-    for f_u in open(user_dic):
-        f_u = f_u.strip()
-        for f_p in open(password_dic):
-            f_p = f_p.strip()
+    with open(user_dic) as users:
+        user_list = users.read().splitlines()
+    with open(password_dic) as passwords:
+        password_list = passwords.read().splitlines()
+
+    for f_u in user_list:
+        for f_p in password_list:
             try:
                 ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(ip, port=22, username=f_u, password=f_p)
-                print('[+++SSH] ' + f_u + ' ---> ' + f_p + '--->'+' success')
-            except Exception:
-                print('[-SSH] ' + f_u + ' ---> ' + f_p +'--->'+' failed')
+                ssh.connect(ip, port=22, username=f_u, password=f_p, timeout=5)
+                print(f'[+++SSH] {f_u} ---> {f_p} success')
+            except Exception as e:
+                print(f'[-SSH] {f_u} ---> {f_p} failed: {e}')
             finally:
                 if 'ssh' in locals():
                     ssh.close()
@@ -45,15 +52,60 @@ def ip_scan(ip, q):
         port = q.get()
         try:
             s = socket.socket()
+            s.settimeout(3)
             s.connect((ip, port))
             print(f"{ip}:{port} open")
             with open('port_open.txt', 'a') as f:
                 f.write(f"{ip}:{port}\n")
-                f.close()
         except Exception:
             print(f"{ip}:{port} closed")
         finally:
             s.close()
+            q.task_done()
+
+
+def web_scan(ip, q):
+    while not q.empty():
+        port = q.get()
+        url = f'http://{ip}:{port}'
+        urls = f'https://{ip}:{port}'
+        try:
+            req = requests.get(url, timeout=3)
+            if req.status_code == 200:
+                print(f'[+++Web]--->Find--->{url}')
+                with open('http_web.txt', 'a') as f:
+                    f.write(url + '\n')
+        except requests.exceptions.RequestException:
+            print(f'[---Web]--->Find--->{url}')
+
+        try:
+            req1 = requests.get(urls, timeout=3)
+            if req1.status_code == 200:
+                print(f'[+++Web]--->Find--->{urls}')
+                with open('https_web.txt', 'a') as f:
+                    f.write(urls + '\n')
+        except requests.exceptions.RequestException:
+            print(f'[---Web]--->Find--->{urls}')
+
+        finally:
+            q.task_done()
+
+
+def duankou(q):
+    mode = input('选择端口扫描模式 (1: 全端口, 2: 自定义端口): ')
+    if mode == '1':
+        for i in range(1, 65536):
+            q.put(i)
+    elif mode == '2':
+        custom_ports = input('请输入自定义端口，用逗号分隔: ')
+        ports = custom_ports.split(',')
+        for port in ports:
+            try:
+                q.put(int(port.strip()))
+            except ValueError:
+                print(f"无效端口: {port}")
+    else:
+        print('无效选择，请输入1或2')
 
 
 if __name__ == '__main__':
@@ -94,24 +146,9 @@ if __name__ == '__main__':
     elif chose == 'burst':
         ip = input('请输入你想要爆破的IP: ')
         th_um = input('请输入你想要爆破的线程: ')
+        mode_high = input('选择爆破模式(1.web探测，2.开发端口扫描): ')
+        duankou(q)
 
-        while True:
-            mode = input('选择端口扫描模式 (1: 全端口, 2: 自定义端口): ')
-            if mode == '1':
-                for i in range(1, 65536):
-                    q.put(i)
-                break
-            elif mode == '2':
-                custom_ports = input('请输入自定义端口，用逗号分隔: ')
-                ports = custom_ports.split(',')
-                for port in ports:
-                    try:
-                        q.put(int(port.strip()))
-                    except ValueError:
-                        print(f"无效端口: {port}")
-                break
-            else:
-                print('无效选择，请输入1或2')
         try:
             num_threads = int(th_um)
         except ValueError:
@@ -119,10 +156,16 @@ if __name__ == '__main__':
             sys.exit(1)
 
         threads = []
-        for _ in range(num_threads):
-            t = threading.Thread(target=ip_scan, args=(ip, q))
-            t.start()
-            threads.append(t)
+        if mode_high == '1':
+            for _ in range(num_threads):
+                t = threading.Thread(target=web_scan, args=(ip, q))
+                t.start()
+                threads.append(t)
+        elif mode_high == '2':
+            for _ in range(num_threads):
+                t = threading.Thread(target=ip_scan, args=(ip, q))
+                t.start()
+                threads.append(t)
 
         for t in threads:
             t.join()
